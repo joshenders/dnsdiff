@@ -19,7 +19,7 @@ COLOR = {
 }
 
 def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
-    # We need both ns_hostname and ns as PTR record may not match
+    # We need both ns_name and ns_addr as PTR record may not match
     successful = False
     t = 2
 
@@ -40,7 +40,7 @@ def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
                                       COLOR['reset']))
                 else:
                     sys.stderr.write("@@ SERVFAIL after 3 retries from %s for %s %s @@\n" %
-                                     (ns_hostname, rname, rdtype))
+                                     (ns_name, rname, rdtype))
         return response
 
 def added(answer, color=None):
