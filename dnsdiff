@@ -35,7 +35,7 @@ def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
                 continue
             else:
                 if color_enabled:
-                    sys.stderr.write("%s@@ SERVFAIL after 3 retries from %s for %s %s @@\n%s" %
+                    sys.stderr.write("%s@@ SERVFAIL after 3 retries from %s for %s %s @@%s\n" %
                                      (COLOR['cyan'], ns_name, rname, rdtype,
                                       COLOR['reset']))
                 else:
@@ -159,11 +159,11 @@ def main():
 
         else:
             if color_enabled:
-                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@\n%s" %
+                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@%s\n" %
                                  (COLOR['cyan'], ns1_name, rname, rdtype,
                                   COLOR['reset']))
 
-                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@\n%s" %
+                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@%s\n" %
                                  (COLOR['cyan'], ns2_name, rname, rdtype,
                                   COLOR['reset']))
 
