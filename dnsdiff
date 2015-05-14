@@ -11,7 +11,6 @@ from random import randint
 from time import sleep
 
 VERSION='v1.0'
-
 COLOR = {
     'cyan':'\033[0;36m',
     'green':'\033[0;32m',
@@ -64,7 +63,7 @@ def main():
 
     parser._optionals.title = "Options"
 
-    parser.add_argument("-V", "--version", dest="version", action="version",
+    parser.add_argument("-V", "--version", action="version",
                         version="%(prog)s: " + VERSION)
 
     parser.add_argument("-c", "--color", dest="color_enabled", action="store_true",
