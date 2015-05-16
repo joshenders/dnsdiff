@@ -1,52 +1,25 @@
 #!/usr/bin/env python3
 
 import argparse
-import dns.zone, dns.query
+import dns.query, dns.zone
 import os.path
 import socket
 import sys
 import traceback
 
+from blessings import Terminal
 from random import randint
 from time import sleep
 
-# XXX: __version__ or something? Macro maybe?
-VERSION='v1.0-'
-
-# TODO: use termcap library
-COLOR = {
-    'cyan':'\033[0;36m',
-    'green':'\033[0;32m',
-    'red':'\033[0;31m',
-    'reset':'\033[0m'
-}
-
-def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
-    successful = False
-    t = 2
-
-    while not successful:
-        try:
-            response = dns.query.udp(query, ns_addr, timeout=t)
-            successful = True
-        except dns.exception.Timeout:
-            # Retry with exponential backoff
-            if t <= 8:
-                t = t*2
-                continue
-            else:
-                # XXX: Good case for yield or something?
-                error("SERVFAIL", ns_name, rname, rdtype,
-                      color=COLOR_FLAG)
-
-        return response
+# TODO: 
+# __version__ == 'release-deadbeef'
 
 def added(answer, color=False):
     # answer contains multiple records and does not end in newline
     answer = '+' + str(answer[0]).replace('\n', '\n+')
 
     if color:
-        return COLOR['green'] + answer + COLOR['reset']
+        return term.green + answer + term.normal
     else:
         return answer
 
@@ -55,56 +28,74 @@ def removed(answer, color=False):
     answer =  '-' + str(answer[0]).replace('\n', '\n-')
 
     if color:
-        return COLOR['red'] + answer + COLOR['reset']
+        return term.red + answer + term.normal
     else:
         return answer
 
 def error(err_type, ns_name, rname, rdtype, color=False):
     if color:
         return sys.stderr.write("%s@@ %s from %s for %s %s @@%s\n" %
-                 (COLOR['cyan'], err_type, ns_name, rname, rdtype,
-                  COLOR['reset']))
+                 (term.cyan, err_type, ns_name, rname, rdtype, term.normal))
     else:
         return sys.stderr.write("@@ %s from %s for %s %s @@\n" %
                  (err_type, ns_name, rname, rdtype))
 
+def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
+    response = None
+    successful = False
+    t = 2
+
+    while not successful:
+        try:
+            response = dns.query.udp(query, ns_addr, timeout=t)
+            successful = True
+        except dns.exception.Timeout:
+            # Retry with backoff
+            if t <= 8:
+                t = t*2
+                continue
+            else:
+                break
+
+    return response
+
 def main():
     progname = os.path.basename(sys.argv[0])
     parser = argparse.ArgumentParser(prog=progname)
-
     parser._optionals.title = "Options"
 
     parser.add_argument("-V", "--version", action="version",
-                        version="%(prog)s: " + VERSION)
-
+                        version="%(prog)s: " + __version__)
     parser.add_argument("-c", "--color", dest="color_flag", action="store_true",
                         help="enable colorized output")
-
     parser.add_argument("-d", "--delay-max", dest="delay_max",
                         metavar='SECONDS',
                         help="maximum number of seconds of delay to introduce" +
                              " between each request")
-
+    '''
+    TODO: exclusions
+    parser.add_argument("-n", "--ignore-ns", action="store_true",
+                        help="Ignore changes to NS records at the apex")
+    parser.add_argument("-s", "--ignore-soa", action="store_true",
+                        help="Ignore changes to SOA records")
+    parser.add_argument("-t", "--ignore-ttl", action="store_true",
+                        help="Ignore changes to TTL values")
+    '''
     parser.add_argument("-f", "--zonefile", dest="filename", required=True,
                         help="FILENAME is expected to be a valid zone master" +
                              " file\n" +
                              "https://tools.ietf.org/html/rfc1035#section-5")
-
     parser.add_argument("--from-ns", dest="ns1_name", required=True,
                         metavar="NAMESERVER1",
                         help="compare responses to NAMESERVER2")
-
     parser.add_argument("--to-ns", dest="ns2_name", required=True,
                         metavar="NAMESERVER2",
                         help="compare responses to NAMESERVER1")
 
     args = parser.parse_args()
 
-    if args.color_flag:
-        COLOR_FLAG = args.color_flag
+    if args.color_flag: term = Terminal()
 
-    # relativize=False evaluates $ORIGIN and expands @
-    # allow_include=False ignores $INCLUDE statements
     try:
        zone = dns.zone.from_file(args.filename, allow_include=False,
                                  relativize=False)
@@ -124,16 +115,13 @@ def main():
         rdtype = dns.rdatatype.to_text(rdataset.rdtype)
         query = dns.message.make_query(rname, rdtype)
 
-        #sys.stderr.write("dig @%s %s %s" % (args.ns1_name, rname, rdtype))
         r1 = get_dns_response(query, ns1_addr, args.ns1_name, rname, rdtype)
-
-        #sys.stderr.write("dig @%s %s %s" % (args.ns2_name, rname, rdtype))
         r2 = get_dns_response(query, ns2_addr, args.ns2_name, rname, rdtype)
 
         # To help avoid rate limits
         if args.delay_max: sleep(randint(0, args.delay_max))
 
-        # XXX: diff logic is broken
+        # If NXDOMAIN, r.answer is an empty list
         if r1.answer and r2.answer:
             if r1.answer[0] != r2.answer[0]:
                 if not seen_header:
