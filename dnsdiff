@@ -1,25 +1,46 @@
 #!/usr/bin/env python3
 
 import argparse
-import dns.zone, dns.query
+import dns.query, dns.zone
 import os.path
 import socket
 import sys
 import traceback
 
+from blessings import Terminal
 from random import randint
 from time import sleep
 
-VERSION='v1.0'
-COLOR = {
-    'cyan':'\033[0;36m',
-    'green':'\033[0;32m',
-    'red':'\033[0;31m',
-    'reset':'\033[0m'
-}
+# TODO: Package properly
+VERSION = 'v1.1'
+
+def header(ns1_name, ns2_name):
+    global seen_header
+
+    if not seen_header:
+        print("--- %s\n+++ %s" % (ns1_name, ns2_name))
+        seen_header = True
+
+def added(answer, color=False):
+    # answer contains multiple records and does not end in newline
+    answer = '+' + str(answer[0]).replace('\n', '\n+')
+
+    if color:
+        print(term.green + answer + term.normal)
+    else:
+        print(answer)
+
+def removed(answer, color=False):
+    # answer contains multiple records and does not end in newline
+    answer =  '-' + str(answer[0]).replace('\n', '\n-')
+
+    if color:
+        print(term.red + answer + term.normal)
+    else:
+        print(answer)
 
 def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
-    # We need both ns_name and ns_addr as PTR record may not match
+    response = None
     successful = False
     t = 2
 
@@ -28,151 +49,136 @@ def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
             response = dns.query.udp(query, ns_addr, timeout=t)
             successful = True
         except dns.exception.Timeout:
-            # Retry query three times with exponentially larger timeout
-            # before finally aborting
+            # Retry with backoff
             if t <= 8:
-                t = t*2
+                t = t<<1
                 continue
             else:
-                if color_enabled:
-                    sys.stderr.write("%s@@ SERVFAIL after 3 retries from %s for %s %s @@%s\n" %
-                                     (COLOR['cyan'], ns_name, rname, rdtype,
-                                      COLOR['reset']))
-                else:
-                    sys.stderr.write("@@ SERVFAIL after 3 retries from %s for %s %s @@\n" %
-                                     (ns_name, rname, rdtype))
-        return response
+                break
 
-def added(answer, color=None):
-    if color:
-        return (COLOR['green'] +
-               '+' + str(answer[0]).replace('\n', '\n+') + COLOR['reset'])
-    else:
-        return '+' + str(answer[0]).replace('\n', '\n+')
-
-def removed(answer, color=None):
-    if color:
-        return (COLOR['red'] +
-               '-' + str(answer[0]).replace('\n', '\n-') + COLOR['reset'])
-    else:
-        return '-' + str(answer[0]).replace('\n', '\n-')
+    return response
 
 def main():
     progname = os.path.basename(sys.argv[0])
     parser = argparse.ArgumentParser(prog=progname)
-
     parser._optionals.title = "Options"
 
     parser.add_argument("-V", "--version", action="version",
                         version="%(prog)s: " + VERSION)
 
-    parser.add_argument("-c", "--color", dest="color_enabled", action="store_true",
+    parser.add_argument("-c", "--color", dest="color_flag", action="store_true",
                         help="enable colorized output")
 
-    parser.add_argument("-d", "--delay-max", dest="delay_max", metavar='SECONDS',
+    parser.add_argument("-d", "--delay-max", dest="delay_max",
+                        metavar='SECONDS',
                         help="maximum number of seconds of delay to introduce" +
                              " between each request")
-
+    '''
+    # TODO: exclusions
+    parser.add_argument("-n", "--ignore-ns", action="store_true",
+                        help="Ignore changes to NS records at the apex")
+    parser.add_argument("-s", "--ignore-soa", action="store_true",
+                        help="Ignore changes to SOA records")
+    parser.add_argument("-t", "--ignore-ttl", action="store_true",
+                        help="Ignore changes to TTL values")
+    '''
     parser.add_argument("-f", "--zonefile", dest="filename", required=True,
-                        help="FILENAME is expected to be a valid zone master " +
-                             "file\n" +
+                        help="FILENAME is expected to be a valid zone master" +
+                             " file\n" +
                              "https://tools.ietf.org/html/rfc1035#section-5")
 
-    parser.add_argument("--from-ns", dest="nameserver1", required=True,
+    parser.add_argument("--from-ns", dest="ns1_name", required=True,
+                        metavar="NAMESERVER1",
                         help="compare responses to NAMESERVER2")
 
-    parser.add_argument("--to-ns", dest="nameserver2", required=True,
+    parser.add_argument("--to-ns", dest="ns2_name", required=True,
+                        metavar="NAMESERVER2",
                         help="compare responses to NAMESERVER1")
 
     args = parser.parse_args()
 
-    # required
-    zonefile = args.filename
-    ns1_name = args.nameserver1
-    ns2_name = args.nameserver2
+    if args.color_flag:
+        global term
+        term = Terminal()
 
-    delay_enabled = False
-
-    if args.delay_max:
-        delay_enabled = True
-        delay_max = int(args.delay_max)
-
-    # TODO: disable color if output is not a terminal 
-    color_enabled = args.color_enabled
-
-    # relativize=False evaluates $ORIGIN and expands @
-    # allow_include=False ignores $INCLUDE statements
     try:
-       zone = dns.zone.from_file(zonefile, allow_include=False,
+       zone = dns.zone.from_file(args.filename, allow_include=False,
                                  relativize=False)
 
     except dns.exception.DNSException:
-        sys.stderr.write(progname + ": Unable to import %s.\n\n" % zonefile)
+        sys.stderr.write("%s: Unable to import %s.\n" %
+                         (progname, args.filename))
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
     # TODO: IPv6 support with socket.getaddrinfo()
-    ns1_addr = socket.gethostbyname(ns1_name)
-    ns2_addr = socket.gethostbyname(ns2_name)
+    ns1_addr = socket.gethostbyname(args.ns1_name)
+    ns2_addr = socket.gethostbyname(args.ns2_name)
 
+    global seen_header
     seen_header = False
 
     for (rname, rdataset) in zone.iterate_rdatasets():
         rdtype = dns.rdatatype.to_text(rdataset.rdtype)
         query = dns.message.make_query(rname, rdtype)
 
-        #sys.stderr.write("dig @%s %s %s" % (ns1_name, rname, rdtype))
-        r1 = get_dns_response(query, ns1_addr, ns1_name, rname, rdtype)
+        # Attempt to evade rate limits
+        if args.delay_max:
+            sleep(randint(0, args.delay_max))
 
-        #sys.stderr.write("dig @%s %s %s" % (ns2_name, rname, rdtype))
-        r2 = get_dns_response(query, ns2_addr, ns2_name, rname, rdtype)
+        r1 = get_dns_response(query, ns1_addr, args.ns1_name, rname, rdtype)
+        if not r1:
+            sys.stderr.write("%s: SERVFAIL from %s for: %s %s\n" %
+                             (progname, args.ns1_name, rname, rdtype))
 
-        # To help avoid rate limits
-        if delay_enabled:
-            sleep(randint(0, delay_max))
+            sys.stderr.write("Try using or increasing --delay-max\n" %
+                             (progname, args.ns1_name, rname, rdtype))
+            sys.exit(1)
+
+        r2 = get_dns_response(query, ns2_addr, args.ns2_name, rname, rdtype)
+        if not r2:
+            sys.stderr.write("%s: SERVFAIL from %s for: %s %s\n" %
+                             (progname, args.ns2_name, rname, rdtype))
+
+            sys.stderr.write("Try using or increasing --delay-max\n" %
+                             (progname, args.ns2_name, rname, rdtype))
+            sys.exit(1)
+
+        # TODO: Fix accuracy in case of round-robin pool. Execute each query
+        # multiple times until most/all records are exposed. --hard, --hunt,
+        # or --pool option?
+ 
+        # BUG: .answer is an empty list if NXDOMAIN or NS record. NS record
+        # will always have empty .answer, check for existance of .authority
+        # instead, search for --from-ns if necessary
+
+        # BUG: cache and sort .answer to avoid false positive for round-robin 
+        # response
 
         if r1.answer and r2.answer:
+            # Answers from both servers, now compare records
             if r1.answer[0] != r2.answer[0]:
-                if not seen_header:
-                    print("--- %s\n+++ %s" %
-                          (ns1_name, ns2_name))
-                    seen_header = True
-
-                if color_enabled:
-                    print(removed(r1.answer, color=True))
-                    print(added(r2.answer, color=True))
-                else:
-                    print(removed(r1.answer))
-                    print(added(r2.answer))
-
+                header(args.ns1_name, args.ns2_name)
+                removed(r1.answer, color=args.color_flag)
+                added(r2.answer, color=args.color_flag)
+        #   else:
+        #       # Records both exist and match
+        #       pass
         elif r1.answer and not r2.answer:
-           if color_enabled:
-                print(removed(r1.answer, color=True))
-           else:
-                print(removed(r1.answer))
-
-        elif r2.answer:
-           if color_enabled:
-                print(added(r2.answer, color=True))
-           else:
-                print(added(r2.answer))
-
+            # exists in r1 but NXDOMAIN in r2
+            header(args.ns1_name, args.ns2_name)
+            removed(r1.answer, color=args.color_flag)
+        elif r2.answer and not r1.answer:
+            # exists in r2 but NXDOMAIN in r1
+            header(args.ns1_name, args.ns2_name)
+            added(r2.answer, color=args.color_flag)
         else:
-            if color_enabled:
-                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@%s\n" %
-                                 (COLOR['cyan'], ns1_name, rname, rdtype,
-                                  COLOR['reset']))
-
-                sys.stderr.write("%s@@ NXDOMAIN from %s for %s %s @@%s\n" %
-                                 (COLOR['cyan'], ns2_name, rname, rdtype,
-                                  COLOR['reset']))
-
-            else:
-                sys.stderr.write("@@ NXDOMAIN from %s for %s %s @@\n" %
-                                 (ns1_name, rname, rdtype))
-
-                sys.stderr.write("@@ NXDOMAIN from %s for %s %s @@\n" %
-                                 (ns2_name, rname, rdtype))
+            # exists in zonefile but NXDOMAIN on both servers
+            sys.stderr.write("%s: NXDOMAIN from both nameservers for: %s %s\n" %
+                             (progname, rname, rdtype))
+            sys.stderr.write("Export zonefile from %s and try again\n" %
+                             args.ns1_name)
+            sys.exit(1)
 
 if __name__ == '__main__':
     main()
