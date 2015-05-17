@@ -12,39 +12,41 @@ from random import randint
 from time import sleep
 
 # TODO: 
-# __version__ == 'release-deadbeef'
+__version__ = 'release-tbd'
 
-def added(answer, color=False):
+def print_added(answer, color=False):
     # answer contains multiple records and does not end in newline
     answer = '+' + str(answer[0]).replace('\n', '\n+')
 
     if color:
-        return print(term.green + answer + term.normal)
+        print(term.green + answer + term.normal)
     else:
-        return print(answer)
+        print(answer)
 
 def print_removed(answer, color=False):
     # answer contains multiple records and does not end in newline
     answer =  '-' + str(answer[0]).replace('\n', '\n-')
 
     if color:
-        return print(term.red + answer + term.normal)
+        print(term.red + answer + term.normal)
     else:
-        return print(answer)
+        print(answer)
 
 def print_error(err_type, ns_name, rname, rdtype, color=False):
     if color:
-        return sys.stderr.write("%s@@ %s from %s for %s %s @@%s\n" %
-                                (term.cyan, err_type, ns_name, rname, rdtype,
-                                 term.normal))
+        sys.stderr.write("%s@@ %s from %s for %s %s @@%s\n" %
+                         (term.cyan, err_type, ns_name, rname, rdtype,
+                          term.normal))
     else:
-        return sys.stderr.write("@@ %s from %s for %s %s @@\n" %
-                                (err_type, ns_name, rname, rdtype))
+        sys.stderr.write("@@ %s from %s for %s %s @@\n" %
+                         (err_type, ns_name, rname, rdtype))
 
-def print_header(seen_header, ns1_name, ns2_name):
+def print_header(ns1_name, ns2_name):
+    global seen_header
+
     if not seen_header:
+        print("--- %s\n+++ %s" % (ns1_name, ns2_name))
         seen_header = True
-        return print("--- %s\n+++ %s" % (ns1_name, ns2_name))
 
 def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
     response = None
@@ -101,6 +103,7 @@ def main():
     args = parser.parse_args()
 
     if args.color_flag:
+        global term
         term = Terminal()
 
     try:
@@ -116,7 +119,8 @@ def main():
     ns1_addr = socket.gethostbyname(args.ns1_name)
     ns2_addr = socket.gethostbyname(args.ns2_name)
 
-    global seen_header = False
+    global seen_header
+    seen_header = False
 
     for (rname, rdataset) in zone.iterate_rdatasets():
         rdtype = dns.rdatatype.to_text(rdataset.rdtype)
@@ -136,25 +140,25 @@ def main():
         if args.delay_max:
             sleep(randint(0, args.delay_max))
 
-        # If NXDOMAIN, r.answer is an empty list.
+        # .answer is an empty list if NXDOMAIN
         if r1.answer and r2.answer:
-            # answer from both servers.
+            # Answers from both servers, now compare records
             # XXX: Fix accuracy of response
             if r1.answer[0] != r2.answer[0]:
-                print_header(seen_header, args.ns1_name, args.ns2_name)
+                print_header(args.ns1_name, args.ns2_name)
                 print_removed(r1.answer, color=args.color_flag)
                 print_added(r2.answer, color=args.color_flag)
         elif r1.answer and not r2.answer:
             # exists in r1 but NXDOMAIN in r2
-            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_header(args.ns1_name, args.ns2_name)
             print_removed(r1.answer, color=args.color_flag)
-        elif r2.answer:
+        elif r2.answer and not r1.answer:
             # exists in r2 but NXDOMAIN in r1
-            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_header(args.ns1_name, args.ns2_name)
             print_added(r2.answer, color=args.color_flag)
         else:
             # exists in zonefile but NXDOMAIN on both servers
-            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_header(args.ns1_name, args.ns2_name)
             print_removed(r1.answer, color=args.color_flag)
             print_removed(r2.answer, color=args.color_flag)
 
