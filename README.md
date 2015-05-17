@@ -58,5 +58,5 @@ source .venv/dnsdiff/bin/activate
 ### Install dependencies
 
 ```
-pip install dnspython3
+pip install dnspython3 blessings
 ```
