@@ -64,7 +64,7 @@ def main():
     parser._optionals.title = "Options"
 
     parser.add_argument("-V", "--version", action="version",
-                        version="%(prog)s: " + __version__)
+                        version="%(prog)s: " + VERSION)
 
     parser.add_argument("-c", "--color", dest="color_flag", action="store_true",
                         help="enable colorized output")
