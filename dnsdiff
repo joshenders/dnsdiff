@@ -19,26 +19,32 @@ def added(answer, color=False):
     answer = '+' + str(answer[0]).replace('\n', '\n+')
 
     if color:
-        return term.green + answer + term.normal
+        return print(term.green + answer + term.normal)
     else:
-        return answer
+        return print(answer)
 
-def removed(answer, color=False):
+def print_removed(answer, color=False):
     # answer contains multiple records and does not end in newline
     answer =  '-' + str(answer[0]).replace('\n', '\n-')
 
     if color:
-        return term.red + answer + term.normal
+        return print(term.red + answer + term.normal)
     else:
-        return answer
+        return print(answer)
 
-def error(err_type, ns_name, rname, rdtype, color=False):
+def print_error(err_type, ns_name, rname, rdtype, color=False):
     if color:
         return sys.stderr.write("%s@@ %s from %s for %s %s @@%s\n" %
-                 (term.cyan, err_type, ns_name, rname, rdtype, term.normal))
+                                (term.cyan, err_type, ns_name, rname, rdtype,
+                                 term.normal))
     else:
         return sys.stderr.write("@@ %s from %s for %s %s @@\n" %
-                 (err_type, ns_name, rname, rdtype))
+                                (err_type, ns_name, rname, rdtype))
+
+def print_header(seen_header, ns1_name, ns2_name):
+    if not seen_header:
+        seen_header = True
+        return print("--- %s\n+++ %s" % (ns1_name, ns2_name))
 
 def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
     response = None
@@ -94,7 +100,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.color_flag: term = Terminal()
+    if args.color_flag:
+        term = Terminal()
 
     try:
        zone = dns.zone.from_file(args.filename, allow_include=False,
@@ -109,34 +116,47 @@ def main():
     ns1_addr = socket.gethostbyname(args.ns1_name)
     ns2_addr = socket.gethostbyname(args.ns2_name)
 
-    seen_header = False
+    global seen_header = False
 
     for (rname, rdataset) in zone.iterate_rdatasets():
         rdtype = dns.rdatatype.to_text(rdataset.rdtype)
         query = dns.message.make_query(rname, rdtype)
 
         r1 = get_dns_response(query, ns1_addr, args.ns1_name, rname, rdtype)
+        if not r1:
+            error("SERVFAIL", args.ns1_name, rname, rdtype, color=color_flag)
+            continue
+
         r2 = get_dns_response(query, ns2_addr, args.ns2_name, rname, rdtype)
+        if not r2:
+            error("SERVFAIL", args.ns2_name, rname, rdtype, color=color_flag)
+            continue
 
-        # To help avoid rate limits
-        if args.delay_max: sleep(randint(0, args.delay_max))
+        # To help evade rate limits
+        if args.delay_max:
+            sleep(randint(0, args.delay_max))
 
-        # If NXDOMAIN, r.answer is an empty list
+        # If NXDOMAIN, r.answer is an empty list.
         if r1.answer and r2.answer:
+            # answer from both servers.
+            # XXX: Fix accuracy of response
             if r1.answer[0] != r2.answer[0]:
-                if not seen_header:
-                    print("--- %s\n+++ %s" % (args.ns1_name, args.ns2_name))
-                    seen_header = True
-
-                    print(removed(r1.answer, color=args.color_flag))
-                    print(added(r2.answer, color=args.color_flag))
-
+                print_header(seen_header, args.ns1_name, args.ns2_name)
+                print_removed(r1.answer, color=args.color_flag)
+                print_added(r2.answer, color=args.color_flag)
         elif r1.answer and not r2.answer:
-            print(removed(r1.answer, color=args.color_flag))
+            # exists in r1 but NXDOMAIN in r2
+            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_removed(r1.answer, color=args.color_flag)
         elif r2.answer:
-            print(added(r2.answer, color=args.color_flag))
+            # exists in r2 but NXDOMAIN in r1
+            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_added(r2.answer, color=args.color_flag)
         else:
-            removed(color=args.color_flag)
+            # exists in zonefile but NXDOMAIN on both servers
+            print_header(seen_header, args.ns1_name, args.ns2_name)
+            print_removed(r1.answer, color=args.color_flag)
+            print_removed(r2.answer, color=args.color_flag)
 
 if __name__ == '__main__':
     main()
