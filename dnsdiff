@@ -22,24 +22,20 @@ def header(ns1_name, ns2_name):
         seen_header = True
 
 def added(answer, color=False):
-    # answer contains multiple records and does not end in newline
-    answer = '+' + str(answer[0]).replace('\n', '\n+')
-
-    if color:
-        print(term.green + answer + term.normal)
-    else:
-        print(answer)
+    for rrset in answer:
+        if color:
+            print(term.green + '+' + rrset + term.normal)
+        else:
+            print(answer)
 
 def removed(answer, color=False):
-    # answer contains multiple records and does not end in newline
-    answer =  '-' + str(answer[0]).replace('\n', '\n-')
+    for rrset in answer:
+        if color:
+            print(term.red + '-' + rrset + term.normal)
+        else:
+            print(answer)
 
-    if color:
-        print(term.red + answer + term.normal)
-    else:
-        print(answer)
-
-def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
+def get_response(query, ns_addr, ns_name, rname, rdtype):
     response = None
     successful = False
     t = 2
@@ -57,6 +53,27 @@ def get_dns_response(query, ns_addr, ns_name, rname, rdtype):
                 break
 
     return response
+
+def extract_rrset(resp, ns_name, rdtype):
+    # http://www.dnspython.org/docs/1.11.0/dns.rcode-module.html
+    NOERROR  = 0
+    #SERVFAIL = 2
+    NXDOMAIN = 3
+    #REFUSED  = 5
+
+    print('dig @' + ns_name, str(resp.question[0]))
+    # For delegated zones, rrsets for NS records will be in the AUTHORITY
+    # section of the dns.message object instead of the ANSWER section
+    if (rdtype == 2
+            and resp.rcode() == NOERROR
+            and not resp.answer
+            and ns_name not in str(resp.authority[0])):
+        return sorted(str(resp.authority[0]).split('\n'))
+
+    if resp.rcode() == NOERROR and resp.answer:
+        return sorted(str(resp.answer[0]).split('\n'))
+    elif resp.rcode() == NXDOMAIN or not resp.answer:
+        return None
 
 def main():
     progname = os.path.basename(sys.argv[0])
@@ -122,56 +139,45 @@ def main():
         rdtype = dns.rdatatype.to_text(rdataset.rdtype)
         query = dns.message.make_query(rname, rdtype)
 
-        # Attempt to evade rate limits
-        if args.delay_max:
-            sleep(randint(0, args.delay_max))
+        # TODO: Improve accuracy for response pools. Execute each query
+        # multiple times until most/all records are exposed and gathered.
 
-        r1 = get_dns_response(query, ns1_addr, args.ns1_name, rname, rdtype)
+        r1 = get_response(query, ns1_addr, args.ns1_name, rname, rdtype)
+
         if not r1:
-            sys.stderr.write("%s: SERVFAIL from %s for: %s %s\n" %
-                             (progname, args.ns1_name, rname, rdtype))
-
-            sys.stderr.write("Try using or increasing --delay-max\n" %
-                             (progname, args.ns1_name, rname, rdtype))
+            sys.stderr.write("%s: Connection timed out to: '%s'\n" %
+                             (progname, args.ns1_name))
+            sys.stderr.write("Try using or increasing --delay-max\n")
             sys.exit(1)
 
-        r2 = get_dns_response(query, ns2_addr, args.ns2_name, rname, rdtype)
+        r2 = get_response(query, ns2_addr, args.ns2_name, rname, rdtype)
+
         if not r2:
-            sys.stderr.write("%s: SERVFAIL from %s for: %s %s\n" %
-                             (progname, args.ns2_name, rname, rdtype))
-
-            sys.stderr.write("Try using or increasing --delay-max\n" %
-                             (progname, args.ns2_name, rname, rdtype))
+            sys.stderr.write("%s: Connection timed out to: '%s'\n" %
+                             (progname, args.ns2_name))
+            sys.stderr.write("Try using or increasing --delay-max\n")
             sys.exit(1)
 
-        # TODO: Fix accuracy in case of round-robin pool. Execute each query
-        # multiple times until most/all records are exposed. --hard, --hunt,
-        # or --pool option?
- 
-        # BUG: .answer is an empty list if NXDOMAIN or NS record. NS record
-        # will always have empty .answer, check for existance of .authority
-        # instead, search for --from-ns if necessary
+        a1 = extract_rrset(r1, args.ns1_name, rdtype)
+        a2 = extract_rrset(r2, args.ns2_name, rdtype)
 
-        # BUG: cache and sort .answer to avoid false positive for round-robin 
-        # response
-
-        if r1.answer and r2.answer:
-            # Answers from both servers, now compare records
-            if r1.answer[0] != r2.answer[0]:
+        if a1 and a2:
+            # Answers from both servers, now compare results
+            if a1 != a2:
                 header(args.ns1_name, args.ns2_name)
-                removed(r1.answer, color=args.color_flag)
-                added(r2.answer, color=args.color_flag)
+                removed(a1, color=args.color_flag)
+                added(a2, color=args.color_flag)
         #   else:
         #       # Records both exist and match
         #       pass
-        elif r1.answer and not r2.answer:
-            # exists in r1 but NXDOMAIN in r2
+        elif a1 and not a2:
+            # exists in a1 but NXDOMAIN in a2
             header(args.ns1_name, args.ns2_name)
-            removed(r1.answer, color=args.color_flag)
-        elif r2.answer and not r1.answer:
+            removed(a1, color=args.color_flag)
+        elif a2 and not a1:
             # exists in r2 but NXDOMAIN in r1
             header(args.ns1_name, args.ns2_name)
-            added(r2.answer, color=args.color_flag)
+            removed(a2, color=args.color_flag)
         else:
             # exists in zonefile but NXDOMAIN on both servers
             sys.stderr.write("%s: NXDOMAIN from both nameservers for: %s %s\n" %
@@ -179,6 +185,10 @@ def main():
             sys.stderr.write("Export zonefile from %s and try again\n" %
                              args.ns1_name)
             sys.exit(1)
+
+        # Attempt to evade rate limits
+        if args.delay_max:
+            sleep(randint(0, args.delay_max))
 
 if __name__ == '__main__':
     main()
