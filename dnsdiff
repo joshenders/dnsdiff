@@ -55,25 +55,27 @@ def get_response(query, ns_addr, ns_name, rname, rdtype):
     return response
 
 def extract_rrset(resp, ns_name, rdtype):
-    # http://www.dnspython.org/docs/1.11.0/dns.rcode-module.html
-    NOERROR  = 0
-    #SERVFAIL = 2
-    NXDOMAIN = 3
-    #REFUSED  = 5
+    # Successful query response
+    if response.rcode() == dns.rcode.NOERROR
+            and response.answer:
+        return sorted(str(resp.answer[0]).split('\n'))
 
-    print('dig @' + ns_name, str(resp.question[0]))
-    # For delegated zones, rrsets for NS records will be in the AUTHORITY
-    # section of the dns.message object instead of the ANSWER section
-    if (rdtype == 2
-            and resp.rcode() == NOERROR
+    # rrsets for NS records will be in the AUTHORITY section of the dns.message
+    # object instead of the ANSWER section
+    if (rdtype == dns.rdatatype.NS
+            and resp.rcode() == dns.rcode.NOERROR
             and not resp.answer
             and ns_name not in str(resp.authority[0])):
         return sorted(str(resp.authority[0]).split('\n'))
 
-    if resp.rcode() == NOERROR and resp.answer:
-        return sorted(str(resp.answer[0]).split('\n'))
-    elif resp.rcode() == NXDOMAIN or not resp.answer:
+    # AWS A record with NXDOMAIN Alias Target 
+    if response.rcode() == dns.rcode.NOERROR
+            and not response.answer:
+        sys.stderr.write('%s@@ status: NOERROR, ANSWER: 0 from %s for %s @@%s\n' %
+                         (term.cyan, ns_name, resp.question[0], term.normal))
         return None
+
+    # TODO: handle SERVFAIL, REFUSED, NOTIMP, etc.
 
 def main():
     progname = os.path.basename(sys.argv[0])
