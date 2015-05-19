@@ -14,11 +14,11 @@ from time import sleep
 # TODO: Package properly
 VERSION = 'v1.1'
 
-def header(ns1_name, ns2_name):
+def header(ns1_name, ns1_port, ns2_name, ns2_port):
     global seen_header
 
     if not seen_header:
-        print("--- %s\n+++ %s" % (ns1_name, ns2_name))
+        print("--- %s:%s\n+++ %s:%s" % (ns1_name, ns1_port, ns2_name, ns2_port))
         seen_header = True
 
 def added(answer, color=False):
@@ -35,14 +35,14 @@ def removed(answer, color=False):
         else:
             print(answer)
 
-def get_response(query, ns_addr, ns_name, rname, rdtype):
+def get_response(query, ns_addr, ns_name, rname, rdtype, port):
     response = None
     successful = False
     t = 2
 
     while not successful:
         try:
-            response = dns.query.udp(query, ns_addr, timeout=t)
+            response = dns.query.udp(query, ns_addr, timeout=t, port=port)
             successful = True
         except dns.exception.Timeout:
             # Retry with backoff
@@ -54,23 +54,23 @@ def get_response(query, ns_addr, ns_name, rname, rdtype):
 
     return response
 
-def extract_rrset(resp, ns_name, rdtype):
+def extract_rrset(response, ns_name, rdtype):
     # Successful query response
-    if response.rcode() == dns.rcode.NOERROR
-            and response.answer:
-        return sorted(str(resp.answer[0]).split('\n'))
+    if (response.rcode() == dns.rcode.NOERROR
+            and response.answer):
+        return sorted(str(response.answer[0]).split('\n'))
 
     # rrsets for NS records will be in the AUTHORITY section of the dns.message
     # object instead of the ANSWER section
     if (rdtype == dns.rdatatype.NS
-            and resp.rcode() == dns.rcode.NOERROR
-            and not resp.answer
-            and ns_name not in str(resp.authority[0])):
-        return sorted(str(resp.authority[0]).split('\n'))
+            and response.rcode() == dns.rcode.NOERROR
+            and not response.answer
+            and ns_name not in str(response.authority[0])):
+        return sorted(str(response.authority[0]).split('\n'))
 
     # AWS A record with NXDOMAIN Alias Target 
-    if response.rcode() == dns.rcode.NOERROR
-            and not response.answer:
+    if (response.rcode() == dns.rcode.NOERROR
+            and not response.answer):
         sys.stderr.write('%s@@ status: NOERROR, ANSWER: 0 from %s for %s @@%s\n' %
                          (term.cyan, ns_name, resp.question[0], term.normal))
         return None
@@ -95,23 +95,23 @@ def main():
     '''
     # TODO: exclusions
     parser.add_argument("-n", "--ignore-ns", action="store_true",
-                        help="Ignore changes to NS records at the apex")
+                        help="ignore changes to NS records at the apex")
     parser.add_argument("-s", "--ignore-soa", action="store_true",
-                        help="Ignore changes to SOA records")
+                        help="ignore changes to SOA records")
     parser.add_argument("-t", "--ignore-ttl", action="store_true",
-                        help="Ignore changes to TTL values")
+                        help="ignore changes to TTL values")
     '''
     parser.add_argument("-f", "--zonefile", dest="filename", required=True,
-                        help="FILENAME is expected to be a valid zone master" +
-                             " file\n" +
+                        help="FILENAME is expected to be a valid BIND" +
+                             " zonefile exported from NAMESERVER1\n" +
                              "https://tools.ietf.org/html/rfc1035#section-5")
 
     parser.add_argument("--from-ns", dest="ns1_name", required=True,
-                        metavar="NAMESERVER1",
+                        metavar="NAMESERVER1[:PORT]",
                         help="compare responses to NAMESERVER2")
 
     parser.add_argument("--to-ns", dest="ns2_name", required=True,
-                        metavar="NAMESERVER2",
+                        metavar="NAMESERVER2[:PORT]",
                         help="compare responses to NAMESERVER1")
 
     args = parser.parse_args()
@@ -130,6 +130,18 @@ def main():
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
+    # Default UDP port
+    ns1_port = ns2_port = 53
+
+    # Support for alternate port
+    if ':' in args.ns1_name:
+         ns1_port = int(args.ns1_name.split(':')[1])
+         args.ns1_name = args.ns1_name.split(':')[0]
+
+    if ':' in args.ns2_name:
+         ns2_port = int(args.ns2_name.split(':')[1])
+         args.ns2_name = args.ns2_name.split(':')[0]
+
     # TODO: IPv6 support with socket.getaddrinfo()
     ns1_addr = socket.gethostbyname(args.ns1_name)
     ns2_addr = socket.gethostbyname(args.ns2_name)
@@ -144,7 +156,7 @@ def main():
         # TODO: Improve accuracy for response pools. Execute each query
         # multiple times until most/all records are exposed and gathered.
 
-        r1 = get_response(query, ns1_addr, args.ns1_name, rname, rdtype)
+        r1 = get_response(query, ns1_addr, args.ns1_name, rname, rdtype, ns1_port)
 
         if not r1:
             sys.stderr.write("%s: Connection timed out to: '%s'\n" %
@@ -152,7 +164,7 @@ def main():
             sys.stderr.write("Try using or increasing --delay-max\n")
             sys.exit(1)
 
-        r2 = get_response(query, ns2_addr, args.ns2_name, rname, rdtype)
+        r2 = get_response(query, ns2_addr, args.ns2_name, rname, rdtype, ns2_port)
 
         if not r2:
             sys.stderr.write("%s: Connection timed out to: '%s'\n" %
@@ -164,26 +176,26 @@ def main():
         a2 = extract_rrset(r2, args.ns2_name, rdtype)
 
         if a1 and a2:
-            # Answers from both servers, now compare results
+            # Answers from both servers, compare rrsets
             if a1 != a2:
-                header(args.ns1_name, args.ns2_name)
+                header(args.ns1_name, ns1_port, args.ns2_name, ns2_port)
                 removed(a1, color=args.color_flag)
                 added(a2, color=args.color_flag)
         #   else:
         #       # Records both exist and match
         #       pass
         elif a1 and not a2:
-            # exists in a1 but NXDOMAIN in a2
-            header(args.ns1_name, args.ns2_name)
+            # added to ns1 removed from ns2
+            header(args.ns1_name, ns1_port, args.ns2_name, ns2_port)
             removed(a1, color=args.color_flag)
         elif a2 and not a1:
-            # exists in r2 but NXDOMAIN in r1
-            header(args.ns1_name, args.ns2_name)
-            removed(a2, color=args.color_flag)
+            # added to ns2 removed from ns1
+            header(args.ns1_name, ns1_port, args.ns2_name, ns2_port)
+            added(a2, color=args.color_flag)
         else:
-            # exists in zonefile but NXDOMAIN on both servers
-            sys.stderr.write("%s: NXDOMAIN from both nameservers for: %s %s\n" %
-                             (progname, rname, rdtype))
+            # exists in zonefile but not on either server
+            sys.stderr.write("%s: Record \"%s\" exists in zonefile but not on either server.\n" %
+                             (progname, query.question[0]))
             sys.stderr.write("Export zonefile from %s and try again\n" %
                              args.ns1_name)
             sys.exit(1)
