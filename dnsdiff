@@ -9,17 +9,26 @@ import traceback
 
 from blessings import Terminal
 from random import randint
-from time import sleep
+from time import sleep, strftime
 
 # TODO: Package properly
-VERSION = 'v1.1'
+VERSION = 'release-1.2-'
 
 def header(ns1_name, ns1_port, ns2_name, ns2_port):
     global seen_header
 
+    std_port = socket.getservbyname('domain')
+    t_stamp = strftime('%Y-%m-%d %H:%M:%S.%S %z')
+
     if not seen_header:
-        print("--- %s:%s\n+++ %s:%s" % (ns1_name, ns1_port, ns2_name, ns2_port))
-        seen_header = True
+        if ns1_port != std_port or ns2_port != std_port:
+            print("--- %s:%s\t%s\n+++ %s:%s\t%s" %
+                  (ns1_name, ns1_port, t_stamp, ns2_name, ns2_port, t_stamp))
+        else:
+            print("--- %s\t%s\n+++ %s\t%s" %
+                  (ns1_name, t_stamp, ns2_name, t_stamp))
+
+    seen_header = True
 
 def added(answer, color=False):
     for rrset in answer:
@@ -54,10 +63,15 @@ def get_response(query, ns_addr, ns_name, rname, rdtype, port):
 
     return response
 
-def extract_rrset(response, ns_name, rdtype):
+def extract_rrset(response, ns_name, rdtype, ignore_ttl=False):
+    # TODO: handle SERVFAIL, REFUSED, NOTIMP, etc?
+    # Return only well-undestood cases so that this fails loudly
+
     # Successful query response
     if (response.rcode() == dns.rcode.NOERROR
             and response.answer):
+        if ignore_ttl:
+            response.answer[0].ttl = 0
         return sorted(str(response.answer[0]).split('\n'))
 
     # rrsets for NS records will be in the AUTHORITY section of the dns.message
@@ -66,16 +80,16 @@ def extract_rrset(response, ns_name, rdtype):
             and response.rcode() == dns.rcode.NOERROR
             and not response.answer
             and ns_name not in str(response.authority[0])):
+        if ignore_ttl:
+            response.authority[0].ttl = 0
         return sorted(str(response.authority[0]).split('\n'))
 
-    # AWS A record with NXDOMAIN Alias Target 
+    # AWS Alias record with NXDOMAIN target
     if (response.rcode() == dns.rcode.NOERROR
             and not response.answer):
-        sys.stderr.write('%s@@ status: NOERROR, ANSWER: 0 from %s for %s @@%s\n' %
-                         (term.cyan, ns_name, resp.question[0], term.normal))
+        sys.stderr.write('%s: status: NOERROR, ANSWER: 0 from %s for \"%s\"\n' %
+                         (progname, ns_name, resp.question[0]))
         return None
-
-    # TODO: handle SERVFAIL, REFUSED, NOTIMP, etc.
 
 def main():
     progname = os.path.basename(sys.argv[0])
@@ -92,18 +106,14 @@ def main():
                         metavar='SECONDS',
                         help="maximum number of seconds of delay to introduce" +
                              " between each request")
-    '''
-    # TODO: exclusions
-    parser.add_argument("-n", "--ignore-ns", action="store_true",
-                        help="ignore changes to NS records at the apex")
-    parser.add_argument("-s", "--ignore-soa", action="store_true",
-                        help="ignore changes to SOA records")
-    parser.add_argument("-t", "--ignore-ttl", action="store_true",
+
+    parser.add_argument("-t", "--ignore-ttl", dest="ttl_flag",
+                        action="store_true",
                         help="ignore changes to TTL values")
-    '''
+
     parser.add_argument("-f", "--zonefile", dest="filename", required=True,
-                        help="FILENAME is expected to be a valid BIND" +
-                             " zonefile exported from NAMESERVER1\n" +
+                        help="FILENAME is expected to be a valid " +
+                             "zonefile exported from NAMESERVER1\n" +
                              "https://tools.ietf.org/html/rfc1035#section-5")
 
     parser.add_argument("--from-ns", dest="ns1_name", required=True,
@@ -126,11 +136,11 @@ def main():
 
     except dns.exception.DNSException:
         sys.stderr.write("%s: Unable to import %s.\n" %
-                         (progname, args.filename))
+            (progname, args.filename))
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
-    # Default UDP port
+    # Default port
     ns1_port = ns2_port = 53
 
     # Support for alternate port
@@ -172,8 +182,9 @@ def main():
             sys.stderr.write("Try using or increasing --delay-max\n")
             sys.exit(1)
 
-        a1 = extract_rrset(r1, args.ns1_name, rdtype)
-        a2 = extract_rrset(r2, args.ns2_name, rdtype)
+        # FIXME: Please report any issues with answer extraction
+        a1 = extract_rrset(r1, args.ns1_name, rdtype, ignore_ttl=args.ttl_flag)
+        a2 = extract_rrset(r2, args.ns2_name, rdtype, ignore_ttl=args.ttl_flag)
 
         if a1 and a2:
             # Answers from both servers, compare rrsets
@@ -185,15 +196,15 @@ def main():
         #       # Records both exist and match
         #       pass
         elif a1 and not a2:
-            # added to ns1 removed from ns2
+            # Added to ns1 removed from ns2
             header(args.ns1_name, ns1_port, args.ns2_name, ns2_port)
             removed(a1, color=args.color_flag)
         elif a2 and not a1:
-            # added to ns2 removed from ns1
+            # Added to ns2 removed from ns1
             header(args.ns1_name, ns1_port, args.ns2_name, ns2_port)
             added(a2, color=args.color_flag)
         else:
-            # exists in zonefile but not on either server
+            # Exists in zonefile but not on either server
             sys.stderr.write("%s: Record \"%s\" exists in zonefile but not on either server.\n" %
                              (progname, query.question[0]))
             sys.stderr.write("Export zonefile from %s and try again\n" %
