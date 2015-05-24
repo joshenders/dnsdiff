@@ -9,7 +9,8 @@ ensure that the new provider has imported your zonefile correctly.
 ## Usage
 
 ```
-usage: dnsdiff [-h] [-V] [-c] [-d SECONDS] -f FILENAME --from-ns NAMESERVER1 --to-ns NAMESERVER2
+usage: dnsdiff [-h] [-V] [-c] [-d SECONDS] [-t] -f FILENAME --from-ns
+               NAMESERVER1[:PORT] --to-ns NAMESERVER2[:PORT]
 
 Options:
   -h, --help            show this help message and exit
@@ -18,20 +19,23 @@ Options:
   -d SECONDS, --delay-max SECONDS
                         maximum number of seconds of delay to introduce
                         between each request
+  -t, --ignore-ttl      ignore changes to TTL values
   -f FILENAME, --zonefile FILENAME
-                        FILENAME is expected to be a valid zone master file
+                        FILENAME is expected to be a valid zonefile exported
+                        from NAMESERVER1
                         https://tools.ietf.org/html/rfc1035#section-5
-  --from-ns NAMESERVER1
+  --from-ns NAMESERVER1[:PORT]
                         compare responses to NAMESERVER2
-  --to-ns NAMESERVER2   compare responses to NAMESERVER1
+  --to-ns NAMESERVER2[:PORT]
+                        compare responses to NAMESERVER1
 ```
 
 ### Example
 
 ```
 $ dnsdiff --zonefile example.com.zone --from-ns ns1.example.com --to-ns ns1.cloudflare.com
---- ns1.example.com
-+++ ns1.cloudflare.com
+--- ns1.example.com         2015-05-24 06:00:40 +0000
++++ ns1.cloudflare.com      2015-05-24 06:00:40 +0000
 -example.com. 172800 IN NS ns1.example.com.
 -example.com. 172800 IN NS ns2.example.com.
 +example.com. 86400 IN NS ns1.cloudflare.com.
@@ -40,7 +44,7 @@ $ dnsdiff --zonefile example.com.zone --from-ns ns1.example.com --to-ns ns1.clou
 +example.com. 3600 IN SOA ns1.cloudflare.com. dns.example.com. 2 3600 600 604800 1800
 ```
 
-## Installation
+## Installation (Debian)
 ### Install system packages
 
 ```
