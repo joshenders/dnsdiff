@@ -12,20 +12,21 @@ from random import randint
 from time import sleep, strftime
 
 # TODO: Package properly
-VERSION = 'release-1.2-'
+VERSION = 'release-1.2'
 
 def header(ns1_name, ns1_port, ns2_name, ns2_port):
     global seen_header
 
     std_port = socket.getservbyname('domain')
-    t_stamp = strftime('%Y-%m-%d %H:%M:%S.%S %z')
+    t_stamp = strftime('%Y-%m-%d %H:%M:%S %z')
 
+    # http://superuser.com/questions/710019/
     if not seen_header:
         if ns1_port != std_port or ns2_port != std_port:
-            print("--- %s:%s\t%s\n+++ %s:%s\t%s" %
+            print("--- %s:%s\t%s\n+++ %s:%s\t\t%s" %
                   (ns1_name, ns1_port, t_stamp, ns2_name, ns2_port, t_stamp))
         else:
-            print("--- %s\t%s\n+++ %s\t%s" %
+            print("--- %s\t%s\n+++ %s\t\t%s" %
                   (ns1_name, t_stamp, ns2_name, t_stamp))
 
     seen_header = True
@@ -35,14 +36,14 @@ def added(answer, color=False):
         if color:
             print(term.green + '+' + rrset + term.normal)
         else:
-            print(answer)
+            print('+' + rrset)
 
 def removed(answer, color=False):
     for rrset in answer:
         if color:
             print(term.red + '-' + rrset + term.normal)
         else:
-            print(answer)
+            print('-' + rrset)
 
 def get_response(query, ns_addr, ns_name, rname, rdtype, port):
     response = None
@@ -76,10 +77,10 @@ def extract_rrset(response, ns_name, rdtype, ignore_ttl=False):
 
     # rrsets for NS records will be in the AUTHORITY section of the dns.message
     # object instead of the ANSWER section
-    if (rdtype == dns.rdatatype.NS
+    if (rdtype == 'NS'
             and response.rcode() == dns.rcode.NOERROR
             and not response.answer
-            and ns_name not in str(response.authority[0])):
+            and not ns_name in response.authority[0]):
         if ignore_ttl:
             response.authority[0].ttl = 0
         return sorted(str(response.authority[0]).split('\n'))
@@ -87,8 +88,6 @@ def extract_rrset(response, ns_name, rdtype, ignore_ttl=False):
     # AWS Alias record with NXDOMAIN target
     if (response.rcode() == dns.rcode.NOERROR
             and not response.answer):
-        sys.stderr.write('%s: status: NOERROR, ANSWER: 0 from %s for \"%s\"\n' %
-                         (progname, ns_name, resp.question[0]))
         return None
 
 def main():
@@ -133,10 +132,9 @@ def main():
     try:
        zone = dns.zone.from_file(args.filename, allow_include=False,
                                  relativize=False)
-
     except dns.exception.DNSException:
         sys.stderr.write("%s: Unable to import %s.\n" %
-            (progname, args.filename))
+                         (progname, args.filename))
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
