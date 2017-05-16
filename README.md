@@ -44,6 +44,13 @@ $ dnsdiff --zonefile example.com.zone --from-ns ns1.example.com --to-ns ns1.clou
 +example.com. 3600 IN SOA ns1.cloudflare.com. dns.example.com. 2 3600 600 604800 1800
 ```
 
+### Docker
+```
+$ docker build -t dnsdiff .
+$ docker run dnsdiff
+$ docker run --rm -v example.com.zone:/zonefile.db dnsdiff --from-ns ns1.example.com --to-ns ns1.cloudflare.com --zonefile /zonefile.db
+```
+
 ## Installation (Debian)
 ### Install system packages
 
