@@ -5,7 +5,6 @@ import dns.query, dns.zone
 import os.path
 import socket
 import sys
-import traceback
 
 from blessings import Terminal
 from random import randint
@@ -123,6 +122,9 @@ def main():
                         metavar="NAMESERVER2[:PORT]",
                         help="compare responses to NAMESERVER1")
 
+    parser.add_argument("--origin", dest="origin",
+                        help="Set origin of the zonefile")
+
     args = parser.parse_args()
 
     if args.color_flag:
@@ -130,12 +132,16 @@ def main():
         term = Terminal()
 
     try:
-       zone = dns.zone.from_file(args.filename, allow_include=False,
-                                 relativize=False)
+        zone = dns.zone.from_file(args.filename,
+                                  origin=args.origin,
+                                  allow_include=False,
+                                  relativize=False)
+    except dns.zone.UnknownOrigin:
+        print("{}: Unable to find origin parameter."
+              " Please use argument --origin.".format(progname))
+        sys.exit(1)
     except dns.exception.DNSException:
-        sys.stderr.write("%s: Unable to import %s.\n" %
-                         (progname, args.filename))
-        traceback.print_exc(file=sys.stderr)
+        print("{}: Unable to import {}.".format(progname, args.filename))
         sys.exit(1)
 
     # Default port
@@ -167,17 +173,17 @@ def main():
         r1 = get_response(query, ns1_addr, args.ns1_name, rname, rdtype, ns1_port)
 
         if not r1:
-            sys.stderr.write("%s: Connection timed out to: '%s'\n" %
-                             (progname, args.ns1_name))
-            sys.stderr.write("Try using or increasing --delay-max\n")
+            print("{}: Connection timed out to: '{}'".format(
+                progname, args.ns1_name))
+            print("Try using or increasing --delay-max")
             sys.exit(1)
 
         r2 = get_response(query, ns2_addr, args.ns2_name, rname, rdtype, ns2_port)
 
         if not r2:
-            sys.stderr.write("%s: Connection timed out to: '%s'\n" %
-                             (progname, args.ns2_name))
-            sys.stderr.write("Try using or increasing --delay-max\n")
+            print("{}: Connection timed out to: '{}'".format(
+                progname, args.ns2_name))
+            print("Try using or increasing --delay-max")
             sys.exit(1)
 
         # FIXME: Please report any issues with answer extraction
@@ -203,10 +209,10 @@ def main():
             added(a2, color=args.color_flag)
         else:
             # Exists in zonefile but not on either server
-            sys.stderr.write("%s: Record \"%s\" exists in zonefile but not on either server.\n" %
-                             (progname, query.question[0]))
-            sys.stderr.write("Export zonefile from %s and try again\n" %
-                             args.ns1_name)
+            print("{}: Record \"{}\" exists in zonefile but not on either"
+                  "server.".format(progname, query.question[0]))
+            print("Export zonefile from {} and try again".format(
+                args.ns1_name))
             sys.exit(1)
 
         # Attempt to evade rate limits
