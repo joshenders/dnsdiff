@@ -1,7 +1,7 @@
 # dnsdiff
 ## About
 `dnsdiff` compares the responses between two nameservers and provides output
-in universal diff format.
+in unified diff format.
 
 Run `dnsdiff` before delegating authority of a zone to a new provider to
 ensure that the new provider has imported your zonefile correctly.
